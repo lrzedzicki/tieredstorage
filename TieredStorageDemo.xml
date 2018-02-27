@@ -1,0 +1,252 @@
+<export><workspace name="TieredStorageDemo"><query name="Create Database" focus="true" listorder="1" taborder="1" active="true" database="9708470304410265534" server="9079901901278037636" database-name="Documents" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+import module namespace admin = "http://marklogic.com/xdmp/admin"
+ at "/MarkLogic/admin.xqy" ;
+
+declare variable $database-name := "TieredStorageDemo";
+declare variable $c := admin:get-configuration();
+
+let $c := admin:database-create($c, $database-name, xdmp:security-database(), xdmp:schema-database())
+return
+  admin:save-configuration($c)
+</query><query name="Create Range Index" focus="false" listorder="2" taborder="2" active="true" database="9708470304410265534" server="9079901901278037636" database-name="Documents" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" at "/MarkLogic/admin.xqy";
+
+declare variable $database-name := "TieredStorageDemo";
+
+let $c := admin:get-configuration()
+let $dbid := admin:database-get-id($c, $database-name)
+let $c := admin:database-add-range-element-index(
+            $c,
+            $dbid,
+            admin:database-range-element-index(
+              'date',
+              (),
+              'partition-date',
+              '',
+              false()
+            )
+          )
+return
+  admin:save-configuration($c)
+</query><query name="Set Assignment Policy" focus="false" listorder="3" taborder="3" active="true" database="4927109071572835136" server="9079901901278037636" database-name="TieredStorageDemo" server-name="App-Services" mode="xquery">xquery version "1.0-ml"; 
+
+(: 
+  Perform on the tiered storage database.
+  Sets the database assignment policy to range and references the range index created in the previous step
+:)
+
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+  at "/MarkLogic/admin.xqy";
+
+declare variable $database-name := "TieredStorageDemo";
+
+let $c := admin:get-configuration()
+let $dbid := admin:database-get-id($c, $database-name)
+(: Locking must be set to strict for a range assignment policy :)
+let $c := admin:database-set-locking($c, $dbid, "strict")
+let $ref := cts:element-reference(xs:QName("partition-date"))
+let $range-policy := admin:range-assignment-policy($ref, fn:false())
+let $c := admin:database-set-assignment-policy($c, $dbid, $range-policy)
+return
+  admin:save-configuration($c)</query><query name="Create Default Partition" focus="false" listorder="4" taborder="4" active="true" database="9708470304410265534" server="9079901901278037636" database-name="Documents" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(: Create a default partition - for data that isn't assigned to other partitions :)
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+  at "/MarkLogic/admin.xqy";
+
+import module namespace ts="http://marklogic.com/xdmp/tieredstorage" 
+  at "/MarkLogic/tieredstorage.xqy";
+
+declare variable $database-name := "TieredStorageDemo";
+
+let $c := admin:get-configuration()
+return
+  ts:partition-create(
+    xdmp:database($database-name), (: database ID :)
+    "default",                     (: partition name :)
+    (),                            (: lower bound - optional :)
+    (),                            (: upper bound - optional :) 
+    2,                             (: number of forests per host for this partition - defaults to 1:)
+    admin:get-host-ids($c),        (: host IDs for this cluster :)
+    (),                            (: data directory - optional :)
+    (),                            (: large data directory - optional :)
+    (),                            (: fast data directory - optional :)
+    ()
+  )</query><query name="Create 3Year Partition" focus="false" listorder="5" taborder="5" active="true" database="4927109071572835136" server="9079901901278037636" database-name="TieredStorageDemo" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(: Create a partition for data up to 3 years old :)
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+  at "/MarkLogic/admin.xqy";
+
+import module namespace ts="http://marklogic.com/xdmp/tieredstorage" 
+  at "/MarkLogic/tieredstorage.xqy";
+
+declare variable $database-name := "TieredStorageDemo";
+
+let $c := admin:get-configuration()
+return
+  ts:partition-create(
+    xdmp:database($database-name),
+    "3Years",
+    fn:current-date() - xs:yearMonthDuration("P3Y"),
+    xs:date("9999-12-31-04:00"), 
+    2, 
+    admin:get-host-ids($c), 
+    (), 
+    (), 
+    (), 
+    ()
+  )</query><query name="Create Long Tail Partition" focus="false" listorder="6" taborder="6" active="true" database="9708470304410265534" server="9079901901278037636" database-name="Documents" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(: Create a partition for data between 3 and 10 years old :)
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+  at "/MarkLogic/admin.xqy";
+
+import module namespace ts="http://marklogic.com/xdmp/tieredstorage" 
+  at "/MarkLogic/tieredstorage.xqy";
+
+declare variable $database-name := "TieredStorageDemo";
+
+let $c := admin:get-configuration()
+return
+  ts:partition-create(
+    xdmp:database($database-name),
+    "LongTail",
+    fn:current-date() - xs:yearMonthDuration("P10Y"),
+    fn:current-date() - xs:yearMonthDuration("P3Y"),
+    2, 
+    admin:get-host-ids($c), 
+    (), 
+    (), 
+    (), 
+    ()
+  )</query><query name="Load Data" focus="false" listorder="7" taborder="7" active="true" database="4927109071572835136" server="9079901901278037636" database-name="TieredStorageDemo" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(:
+  SET CONTENT SOURCE TO THE TieredStorageDemo DATABASE.
+  Create data that spans the various partitions and that are close to the 
+  partition boundaries so as to demonstrate in which partitions documents 
+  will be placed.
+:)
+
+(:
+  0 to X where X is the number of times you'll update the partition boundaries;
+  we need just enough documents to demonstrate data movement on each boundary partition change.
+:)
+declare variable $days := (0 to 2);
+declare variable $dates :=
+  (
+    for $d in $days
+      let $minus := if ($d lt 0) then "-" else ""
+      return
+        fn:current-date() - xs:yearMonthDuration("P10Y") + xs:dayTimeDuration($minus || "P" || fn:abs($d) || "D"),
+    for $d in $days
+      let $minus := if ($d lt 0) then "-" else ""
+      return
+        fn:current-date() - xs:yearMonthDuration("P3Y") + xs:dayTimeDuration($minus || "P" || fn:abs($d) || "D"),
+    for $d in $days
+      let $minus := if ($d lt 0) then "-" else ""
+      return
+        fn:current-date() + xs:dayTimeDuration($minus || "P" || fn:abs($d) || "D")
+  );
+
+for $date at $id in $dates
+  return
+    xdmp:document-insert(
+      "/data/id/" || $id || "/date/" || $date || ".xml",
+      &lt;doc id="{$id}"&gt;&lt;partition-date&gt;{$date}&lt;/partition-date&gt;&lt;/doc&gt;
+    )</query><query name="Show Data" focus="false" listorder="8" taborder="8" active="true" database="4927109071572835136" server="9079901901278037636" database-name="TieredStorageDemo" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(: 
+  SET CONTENT SOURCE TO THE TieredStorageDemo DATABASE.
+  Show data in the various partitions
+  
+  Shift+Command+4: take a picture and save it on the desktop.
+:)
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+      at "/MarkLogic/admin.xqy";
+
+declare variable $forest-starter-names := ("3Years", "LongTail", "default");
+
+let $c := admin:get-configuration()
+return
+  for $forest-starter-name in $forest-starter-names
+    let $lower-bound := admin:forest-get-range-policy-lower-bound($c, xdmp:forest(xdmp:forest-name(xdmp:forests())[fn:starts-with(., $forest-starter-name)])[1])
+    let $upper-bound := admin:forest-get-range-policy-upper-bound($c, xdmp:forest(xdmp:forest-name(xdmp:forests())[fn:starts-with(., $forest-starter-name)])[1])
+    return
+      &lt;doc partition="{$forest-starter-name}" lb="{$lower-bound}" ub="{$upper-bound}"&gt;{
+        cts:search(
+          fn:collection(),
+          cts:and-query(()),
+          cts:index-order(cts:element-reference(xs:QName("partition-date")), "descending"),
+          (),
+          xdmp:forest(xdmp:forest-name(xdmp:forests())[fn:starts-with(., $forest-starter-name)])
+        ) ! element partition-date { attribute docID { ./doc/@id }, ./doc/partition-date/fn:data() }
+      }&lt;/doc&gt;</query><query name="Change Partition Ranges" focus="false" listorder="9" taborder="9" active="true" database="4927109071572835136" server="9079901901278037636" database-name="TieredStorageDemo" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(:
+  Change the (ORIGINAL) boundaries of the partitions by $day-offset day(s).
+  Then run the previous step again, Show Data, to see how some documents
+  have been moved into other partitions.
+:)
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+      at "/MarkLogic/admin.xqy";
+
+declare variable $forest-starter-names := ("3Years", "LongTail");
+declare variable $day-offset := 1;
+
+declare variable $dates :=
+  (
+    (: 3Year :)
+    fn:current-date() - xs:yearMonthDuration("P3Y") + xs:dayTimeDuration("P" || $day-offset || "D"),
+    xs:date("9999-12-31-04:00"), 
+    (: LongTail :)
+    fn:current-date() - xs:yearMonthDuration("P10Y") + xs:dayTimeDuration("P" || $day-offset || "D"),
+    fn:current-date() - xs:yearMonthDuration("P3Y") + xs:dayTimeDuration("P" || $day-offset || "D")
+  );
+
+
+let $c := admin:get-configuration()
+let $_ :=
+  for $forest-starter-name at $cntr in $forest-starter-names
+    for $forest-name in xdmp:forest-name(xdmp:forests())[fn:starts-with(., $forest-starter-name)]
+      return
+        xdmp:set($c, admin:forest-set-range-policy-range($c, xdmp:forest($forest-name), $dates[$cntr * 2 - 1], $dates[$cntr * 2]))
+return
+  admin:save-configuration($c)
+</query><query name="Delete Database" focus="false" listorder="10" taborder="10" active="true" database="9708470304410265534" server="9079901901278037636" database-name="Documents" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+		  at "/MarkLogic/admin.xqy";
+
+declare variable $database-name := "TieredStorageDemo";
+
+let $c := admin:get-configuration()
+let $c := admin:database-delete($c, admin:database-get-id($c, $database-name))
+return
+  admin:save-configuration($c)</query><query name="Delete Forests" focus="false" listorder="11" taborder="11" active="true" database="9708470304410265534" server="9079901901278037636" database-name="Documents" server-name="App-Services" mode="xquery">xquery version "1.0-ml";
+
+(: Run against database other than TieredStorageDemo - it won't exist :)
+
+import module namespace admin = "http://marklogic.com/xdmp/admin" 
+		  at "/MarkLogic/admin.xqy";
+
+declare variable $forest-starter-names := ("3Years", "LongTail", "default");
+
+let $c := admin:get-configuration()
+let $_ :=
+  for $forest-starter-name in $forest-starter-names
+    for $forest-name in xdmp:forest-name(xdmp:forests())[fn:starts-with(., $forest-starter-name)]
+      return
+        xdmp:set($c, admin:forest-delete($c, xdmp:forest($forest-name), fn:true()))
+return
+  admin:save-configuration($c)
+</query></workspace></export>
